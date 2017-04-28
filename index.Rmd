@@ -1,0 +1,215 @@
+---
+title: "Weight Lifting Exercise - Human Activity Recognition"
+author: "Dhawal Kapil"
+date: "April 19, 2017"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list=ls())
+library(parallel)
+library(doParallel)
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+```
+###Required Libraries
+```{r libraries,warning=FALSE,message=FALSE,include=FALSE}
+require(knitr)
+require(caret)
+require(randomForest)
+require(rattle)
+require(rpart)
+require(RColorBrewer)
+```
+
+#Synopsis
+This report contains analysis on Weight Lifting Exercise (WLE) Dataset a part of Human Activity Recognition research. 
+This specific data set contains sensor data recorded from accelerometers on the belt, forearm, arm, and dumbell of 6 participants who performed specific exercise i.e. Dumbbell Biceps Curl in five different fashions: 
+
+|Class   |Interpretation                                       |
+|--------|-----------------------------------------------------|
+|Class A | Exactly according to the specification              |
+|Class B | Throwing the elbows to the front                    |
+|Class C | Lifting the dumbbell only halfway                   |
+|Class D | Lowering the dumbbell only halfway                  |
+|Class E | Throwing the hips to the front                      |
+
+These classes are denoted by "classe" variable in the data set.
+
+As part of this report our goal will be to build a prediction model based on training set and that model will be used to predict these classes on entirely new set of data.
+
+The data set is first analysed and cleaned. After that only specific features are selected to build our prediction model.
+
+Different prediction models were evaluated for accuracy and best one was chosen to predict on our test set.
+
+Read more: http://groupware.les.inf.puc-rio.br/har#wle_paper_section#ixzz4fIEerfMy
+
+Note:
+
+* For this report to compile and run will _require training and test data to be present in current directory_. If its present it will proceed further _if not_ the R chunk for downloading the data _will download the required files_.
+
+The training and testing data has been downloaded from [this][1] and [this][2] location respectively and [web link][3] was referred for further infromation on WLE data set.
+
+#Data Processing
+This section covers the entire analysis part.
+This has sub-sections that covers data processing, cleaning, analysis and plotting part.
+
+###Downloading Data
+Downloading and extracting training and testing data files. The code block below checks if the files are already present in current workspace. If yes, it proceeds on to load them if not it downloads a fresh copy from server.
+```{r Downloading,cache=TRUE}
+## Downloading and Extracting file. This checks if files are already present in the directory.
+trainingDataUrl<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv";
+trainingDataFile<-"pml-training.csv";
+testingDataUrl<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv";
+testingDataFile<-"pml-testing.csv";
+
+## Checking If Training Data is present in the current workspace
+if(!(file.exists(trainingDataFile))) {
+        print("Required Training Data Not Present..Downloading..")
+        download.file(url = trainingDataUrl,destfile = trainingDataFile)
+} else {
+        print("HAR Training Data Present")
+}
+
+## Checking If Testing Data is present in the current workspace
+if(!(file.exists(testingDataFile))) {
+        print("Required Testing Data Not Present..Downloading..")
+        download.file(url = testingDataUrl,destfile = testingDataFile)
+} else {
+        print("HAR Testing Data Present")
+}
+```
+###Reading Data
+```{r Reading Data,cache=TRUE}
+trainingdata<-read.csv(trainingDataFile)
+testingdata<-read.csv(testingDataFile)
+```
+
+###Cleaning Data and Feature Selection
+There are few things that needs to be cleaned in this data set before we can build a suitable prediction model out of this.
+
+a) This data set not only contains the data from various sensors but it also contains records taken at certain intervals which were statistical computations of the original records.
+
+For e.g. for the actual sensor data *pitch_belt* we have columns such as *min_pitch_belt*, *max_pitch_belt* etc. Similarly we have columns that contains the max, min, average, stddev, amplitude of sensors data.
+
+Their are several reasons why we should not include these columns in our prediction model
+
+- Since these columns are nothing new information but statistical computation of original data they are highly correlated with the original data. Using these columns will anyway not add much value to our prediction model.
+
+- They have a lot of NA values. Imputation is not recommended when we have a high percentage of NA values throughout our data set.
+
+- These columns have Near Zero Variance.
+
+b) Ignoring columns that contains user specific information
+The first few columns such as X, user_name, timestamps these contains user specific information and will not be adding any value in our prediction model.
+
+```{r Cleaning Data}
+#Our required predictors will be any column names except the two scenarios mentioned above.
+
+columnsToIgnorePattern<-'^(max|min|avg|stddev|amplitude|var|kurtosis|skewness|X|user_name|raw_timestamp_part_1|raw_timestamp_part_2|cvtd_timestamp|new_window|num_window)'
+
+requiredPredictors<-colnames(trainingdata[,grep(columnsToIgnorePattern,colnames(trainingdata),invert = TRUE)])
+
+trainingdata<-trainingdata[,requiredPredictors]
+trainingdata<-trainingdata[,-1]
+
+dim(trainingdata)
+
+
+```
+We finally have `r dim(trainingdata)[2]-1` features that we will be using for prediction. The column that we will be predicting is the *classe* column.
+
+#Model Training and Prediction Exercise
+##Model Training
+For this exercise we have both training and testing data provided seperately.
+
+To get the best prediction model we will be training different models on different prediction methods and will be using the method which has maximum accuracy.
+
+To test different models we will be using our training data provided and will partition it into further train and test set.
+
+```{r TrainingTestDataCreation}
+inTrain<-createDataPartition(y = trainingdata$classe,p=0.7,list=FALSE)
+train<-trainingdata[inTrain,]
+test<-trainingdata[-inTrain,]
+```
+
+###Prediction With Decision Trees
+```{r DecisionTreesPrediction,warning=FALSE,message=FALSE}
+modFitDecisionTree<-train(classe~.,data=train,method="rpart")
+predictionDecisionTree<-predict(modFitDecisionTree,newdata = test)
+confusionMatrix(predictionDecisionTree,test$classe)
+fancyRpartPlot(modFitDecisionTree$finalModel,main = "R Part Plot",sub = "R Part Plot Showing Nodes and Leaves")
+accuracyDT<-round(confusionMatrix(predictionDecisionTree,test$classe)$overall['Accuracy'],4)
+```
+
+We can see here that the overall accuracy predicted by decision tree was `r accuracyDT` which is not good.
+
+###Prediction With Boosting
+Next, we will be trying *gbm* boost method with *repeatedCv* as train control method to build our prediction model.
+
+We will be using parallel execution feature here to speed up model training for gbm boost.
+```{r BoostingPrediction,warning=FALSE,message=FALSE}
+fitControl <- trainControl(method = "repeatedcv",number=10,repeats = 1,allowParallel = TRUE)
+modFitBoosting<-train(classe~.,data=train,method="gbm",verbose=FALSE,trControl=fitControl)
+plot(modFitBoosting)
+predictionBoosting<-predict(modFitBoosting,newdata = test);
+confusionMatrix(predictionBoosting,test$classe)
+accuracyGBM<-round(confusionMatrix(predictionBoosting,test$classe)$overall['Accuracy'],4)
+```
+
+Extracting Parameters of Final Model
+
+|Boosting Iteration|Tree Depth|
+|------------------|----------|
+|`r modFitBoosting$finalModel$n.trees`|`r modFitBoosting$finalModel$interaction.depth`|
+
+As we can see from the graph also that correct parameters are chosen to give maximum accuracy.
+
+We can see here that gbm boost method has returned accuracy of `r accuracyGBM` which is definitely a significant improvement from decision trees.
+
+###Prediction With Random Forest
+Next, we will be trying *random forest* method to build our prediction model.
+
+```{r RandomForestPrediction,warning=FALSE,message=FALSE}
+modFitRF<-randomForest(classe~.,data=train,trControl=trainControl(allowParallel = TRUE))
+varImpPlot(modFitRF,main = "Variable Importance Plot")
+predictionRF<-predict(modFitRF,newdata = test)
+confusionMatrix(predictionRF,test$classe)
+accuracyRF<-round(confusionMatrix(predictionRF,test$classe)$overall['Accuracy'],4)
+```
+
+We can see here that *random forest* method has returned accuracy of `r accuracyRF` which is better than what was given by *gbm boost* method.
+
+##Final Training And Prediction
+We have seen that out of our three models Random forest method has given the best accuracy.
+We will be using Random Forest method to train our complete training data now and will use that model to predict the classes for our 20 new testing data set.
+```{r FinalTrainingAndPrediction}
+testingdata<-testingdata[,colnames(trainingdata[,-52])]
+testingdata <- rbind(trainingdata[2, -52] , testingdata)
+testingdata <- testingdata[-1,]
+
+modFitRF<-randomForest(classe~.,data=trainingdata,trControl=trainControl(allowParallel = TRUE))
+predictionTest<-predict(modFitRF,newdata = testingdata)
+predictionTest
+```
+
+```{r destroy}
+stopCluster(cluster)
+registerDoSEQ()
+```
+
+##Summary
+In this exercise we build three different training models and evaluated their accuracy, we find out that the best accuracy was given by *random forest* method and we used it to predict _classe_ variable for our test data.
+
+
+#####Citation
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+Read more: http://groupware.les.inf.puc-rio.br/har#wle_paper_section#ixzz4fIMkJUZ6
+
+[1]:https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+[2]:https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+[3]:http://groupware.les.inf.puc-rio.br/har
